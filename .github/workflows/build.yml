@@ -1,0 +1,112 @@
+name: Build palazikASCII
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── Java ────────────────────────────────────────────────────────────────
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: gradle
+
+      # ── Android SDK + NDK ───────────────────────────────────────────────────
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install NDK and CMake
+        run: |
+          sdkmanager "ndk;26.3.11579264" "cmake;3.22.1"
+
+      # ── ccache ──────────────────────────────────────────────────────────────
+      - name: Install ccache
+        run: sudo apt-get install -y ccache
+
+      - name: Cache ccache store
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ccache-${{ runner.os }}-${{ hashFiles('app/src/main/cpp/**') }}-${{ github.run_id }}
+          restore-keys: |
+            ccache-${{ runner.os }}-${{ hashFiles('app/src/main/cpp/**') }}-
+            ccache-${{ runner.os }}-
+
+      - name: Configure ccache
+        run: |
+          ccache --max-size=2G
+          ccache --zero-stats
+          echo "CCACHE_EXEC=$(which ccache)" >> $GITHUB_ENV
+          echo "NDK_CCACHE=$(which ccache)"  >> $GITHUB_ENV
+
+      # ── Build ───────────────────────────────────────────────────────────────
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Build Debug APK
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
+
+      - name: Build Release APK (unsigned)
+        run: ./gradlew assembleRelease --no-daemon --stacktrace
+
+      - name: Print ccache stats
+        run: ccache --show-stats
+
+      # ── Artifacts ───────────────────────────────────────────────────────────
+      - name: Upload Debug APK to Actions
+        uses: actions/upload-artifact@v4
+        with:
+          name: palazikASCII-debug
+          path: app/build/outputs/apk/debug/*.apk
+          retention-days: 30
+
+      - name: Upload Release APK to Actions
+        uses: actions/upload-artifact@v4
+        with:
+          name: palazikASCII-release-unsigned
+          path: app/build/outputs/apk/release/*.apk
+          retention-days: 30
+
+      # ── Telegram ────────────────────────────────────────────────────────────
+      - name: Resolve APK paths
+        id: apks
+        run: |
+          DEBUG_APK=$(find app/build/outputs/apk/debug   -name "*.apk" | head -1)
+          REL_APK=$(find   app/build/outputs/apk/release -name "*.apk" | head -1)
+          echo "debug=$DEBUG_APK"  >> $GITHUB_OUTPUT
+          echo "release=$REL_APK" >> $GITHUB_OUTPUT
+
+      - name: Send Debug APK to Telegram
+        run: |
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendDocument" \
+            -F chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
+            -F document=@"${{ steps.apks.outputs.debug }}" \
+            -F caption="*palazikASCII* — Debug APK
+          Branch: \`${{ github.ref_name }}\`
+          Commit: \`${{ github.sha }}\`
+          Run: [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})" \
+            -F parse_mode="Markdown"
+
+      - name: Send Release APK to Telegram
+        run: |
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendDocument" \
+            -F chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
+            -F document=@"${{ steps.apks.outputs.release }}" \
+            -F caption="*palazikASCII* — Release APK (unsigned)
+          Branch: \`${{ github.ref_name }}\`
+          Commit: \`${{ github.sha }}\`
+          Run: [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})" \
+            -F parse_mode="Markdown"
