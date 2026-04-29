@@ -1,10 +1,6 @@
 name: Build palazikASCII
 
 on:
-  push:
-    branches: [ main, master ]
-  pull_request:
-    branches: [ main, master ]
   workflow_dispatch:
 
 jobs:
@@ -52,10 +48,15 @@ jobs:
           echo "CCACHE_EXEC=$(which ccache)" >> $GITHUB_ENV
           echo "NDK_CCACHE=$(which ccache)"  >> $GITHUB_ENV
 
-      # ── Build ───────────────────────────────────────────────────────────────
-      - name: Grant execute permission for gradlew
-        run: chmod +x gradlew
+      # ── Gradle wrapper (generate if not committed) ───────────────────────────
+      - name: Generate Gradle wrapper if missing
+        run: |
+          if [ ! -f "gradlew" ]; then
+            gradle wrapper --gradle-version=8.9
+          fi
+          chmod +x gradlew
 
+      # ── Build ───────────────────────────────────────────────────────────────
       - name: Build Debug APK
         run: ./gradlew assembleDebug --no-daemon --stacktrace
 
@@ -91,22 +92,22 @@ jobs:
 
       - name: Send Debug APK to Telegram
         run: |
+          SHORT_SHA="${{ github.sha }}"
+          SHORT_SHA="${SHORT_SHA:0:7}"
+          CAPTION="*palazikASCII* — Debug"$'\n'"Branch: \`${{ github.ref_name }}\`"$'\n'"Commit: \`${SHORT_SHA}\`"$'\n'"Run: [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
           curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendDocument" \
             -F chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
             -F document=@"${{ steps.apks.outputs.debug }}" \
-            -F caption="*palazikASCII* — Debug APK
-          Branch: \`${{ github.ref_name }}\`
-          Commit: \`${{ github.sha }}\`
-          Run: [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})" \
+            -F caption="${CAPTION}" \
             -F parse_mode="Markdown"
 
       - name: Send Release APK to Telegram
         run: |
+          SHORT_SHA="${{ github.sha }}"
+          SHORT_SHA="${SHORT_SHA:0:7}"
+          CAPTION="*palazikASCII* — Release (unsigned)"$'\n'"Branch: \`${{ github.ref_name }}\`"$'\n'"Commit: \`${SHORT_SHA}\`"$'\n'"Run: [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
           curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendDocument" \
             -F chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
             -F document=@"${{ steps.apks.outputs.release }}" \
-            -F caption="*palazikASCII* — Release APK (unsigned)
-          Branch: \`${{ github.ref_name }}\`
-          Commit: \`${{ github.sha }}\`
-          Run: [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})" \
+            -F caption="${CAPTION}" \
             -F parse_mode="Markdown"
