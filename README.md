@@ -1,2 +1,2 @@
 # palazikASCII
-A camera app that uses ASCII symbols
+Fully Open-Source Camera app that uses ASCII symbols
