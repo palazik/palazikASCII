@@ -33,14 +33,13 @@ Java_dev_palazik_palazikascii_MainActivity_getLatestAsciiFrame(
     std::lock_guard<std::mutex> lock(g_mutex);
     if (g_yPlane.empty()) return env->NewStringUTF("[ waiting for camera... ]");
 
-    // If the phone is upright, width and height are swapped for the UI
     bool isPortrait = (g_rotation == 90 || g_rotation == 270);
     int frameW = isPortrait ? g_height : g_width;
     int frameH = isPortrait ? g_width : g_height;
 
-    // Portrait-optimized grid (64 columns, 128 rows fits most phones perfectly)
-    int cols = isPortrait ? 64 : 100;
-    int rows = isPortrait ? 128 : 50;
+    // HIGH RES UPGRADE: 120 columns instead of 64
+    int cols = isPortrait ? 120 : 200;
+    int rows = isPortrait ? 240 : 100;
 
     int cellW = frameW / cols;
     int cellH = frameH / rows;
@@ -63,16 +62,14 @@ Java_dev_palazik_palazikascii_MainActivity_getLatestAsciiFrame(
                     int rawX = srcX;
                     int rawY = srcY;
                     
-                    // Rotate coordinates to fix the "perevornuto" issue
-                    if (g_rotation == 90) { // Back camera
+                    if (g_rotation == 90) { 
                         rawX = srcY;
                         rawY = g_height - 1 - srcX;
-                    } else if (g_rotation == 270) { // Front camera
+                    } else if (g_rotation == 270) { 
                         rawX = g_width - 1 - srcY;
                         rawY = srcX;
                     }
 
-                    // Prevent crashing if a pixel goes out of bounds
                     if (rawX >= 0 && rawX < g_width && rawY >= 0 && rawY < g_height) {
                         sum += g_yPlane[rawY * g_width + rawX];
                         count++;
