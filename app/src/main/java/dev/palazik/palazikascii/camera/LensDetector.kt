@@ -111,8 +111,10 @@ object LensDetector {
             LensType.FRONT,
             LensType.UNKNOWN,
         )
-        return lenses.sortedWith(
-            compareBy({ typeOrder.indexOf(it.lensType) }, { it.focalLength })
-        )
+        return lenses
+            .distinctBy { it.lensType } // <-- THIS FIXES THE DOUBLE CLICK BUG
+            .sortedWith(
+                compareBy({ typeOrder.indexOf(it.lensType) }, { it.focalLength })
+            )
     }
 }
