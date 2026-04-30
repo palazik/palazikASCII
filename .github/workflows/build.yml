@@ -55,9 +55,6 @@ jobs:
           echo "NDK_CCACHE=$(which ccache)"  >> $GITHUB_ENV
 
       # ── Build ───────────────────────────────────────────────────────────────
-      - name: Generate missing Gradle Wrapper
-        run: gradle wrapper --gradle-version 8.9
-
       - name: Make gradlew executable
         run: chmod +x gradlew
 
