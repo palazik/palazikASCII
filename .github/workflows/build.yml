@@ -20,9 +20,18 @@ jobs:
           distribution: 'temurin'
           cache: gradle
 
-      # ── Gradle wrapper permissions ──────────────────────────────────────────
-      - name: Fix gradlew permissions
-        run: chmod +x gradlew
+      # ── Gradle wrapper ──────────────────────────────────────────────────────
+      # We don't commit the jar — download the official one from Gradle releases at build time
+      - name: Set up Gradle wrapper
+        run: |
+          # Download the official gradle-wrapper.jar from Gradle's GitHub release
+          curl -fL \
+            "https://raw.githubusercontent.com/gradle/gradle/refs/tags/v8.9.0/gradle/wrapper/gradle-wrapper.jar" \
+            -o gradle/wrapper/gradle-wrapper.jar
+          chmod +x gradlew
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
 
       # ── Android SDK + NDK ───────────────────────────────────────────────────
       - name: Set up Android SDK
