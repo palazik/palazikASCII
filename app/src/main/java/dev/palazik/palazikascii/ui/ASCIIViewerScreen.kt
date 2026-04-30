@@ -57,6 +57,7 @@ private fun lensIcon(type: LensType) = when (type) {
 fun ASCIIViewerScreen(
     // Callback invoked each frame with the raw ASCII string from JNI
     asciiFrame: String,
+    onFrame: (ByteArray, Int, Int) -> Unit
 ) {
     val viewModel: CameraViewModel = viewModel()
     val uiState by viewModel.uiState.collectAsState()
@@ -79,7 +80,7 @@ fun ASCIIViewerScreen(
     // Bind camera once ViewModel is ready, rebind on lens switch
     LaunchedEffect(uiState.activeLensIndex, uiState.lenses) {
         if (uiState.lenses.isNotEmpty()) {
-            viewModel.bindCamera(lifecycleOwner, preview)
+            viewModel.bindCamera(lifecycleOwner, preview, onFrame)
         }
     }
 
