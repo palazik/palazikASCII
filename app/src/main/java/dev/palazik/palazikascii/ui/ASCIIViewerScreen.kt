@@ -155,19 +155,18 @@ private fun AsciiCanvas(
     modifier: Modifier,
     asciiFrame: String,
 ) {
-    // BoxWithConstraints lets us measure the physical screen size before drawing
     BoxWithConstraints(
         modifier          = modifier.background(TermBg),
         contentAlignment  = Alignment.Center,
     ) {
-        // Compose Math: Forces the 64 C++ columns to perfectly fit the screen width!
-        val dynamicFontSize = (maxWidth.value / (64f * 0.55f)).sp
+        // UPDATED MATH: Divide by 120f instead of 64f to match the new high-res C++ grid
+        val dynamicFontSize = (maxWidth.value / (120f * 0.55f)).sp
 
         Text(
             text       = asciiFrame,
             fontFamily = FontFamily.Monospace,
             fontSize   = dynamicFontSize,
-            lineHeight = dynamicFontSize * 0.85f, // Squish the height slightly so rows touch
+            lineHeight = dynamicFontSize * 0.85f, 
             color      = TermGreen,
             softWrap   = false,
             textAlign  = androidx.compose.ui.text.style.TextAlign.Center,
