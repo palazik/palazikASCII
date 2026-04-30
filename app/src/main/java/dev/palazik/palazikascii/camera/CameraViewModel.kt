@@ -66,7 +66,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     fun bindCamera(
         lifecycleOwner: LifecycleOwner,
         preview: Preview,
-        onFrame: (ByteArray, Int, Int) -> Unit // 1. ADD IT HERE
+        onFrame: (ByteArray, Int, Int, Int) -> Unit
     ) {
         val ctx = getApplication<Application>()
         val future = ProcessCameraProvider.getInstance(ctx)
@@ -79,7 +79,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     fun rebind(
         lifecycleOwner: LifecycleOwner, 
         preview: Preview,
-        onFrame: (ByteArray, Int, Int) -> Unit
+        onFrame: (ByteArray, Int, Int, Int) -> Unit
     ) {
         val provider = cameraProvider ?: return
         provider.unbindAll()
@@ -92,12 +92,15 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             .build()
             .also { ia ->
                 ia.setAnalyzer(ContextCompat.getMainExecutor(ctx)) { imageProxy ->
-                    val plane = imageProxy.planes[0]  // Grab Y plane
+                    val plane = imageProxy.planes[0]  
                     val buf = plane.buffer
                     val bytes = ByteArray(buf.remaining())
                     buf.get(bytes)
                     
-                    onFrame(bytes, imageProxy.width, imageProxy.height) // Send to C++
+                    // GET THE ROTATION HERE AND SEND IT!
+                    val rotation = imageProxy.imageInfo.rotationDegrees
+                    onFrame(bytes, imageProxy.width, imageProxy.height, rotation) 
+                    
                     imageProxy.close()
                 }
             }
