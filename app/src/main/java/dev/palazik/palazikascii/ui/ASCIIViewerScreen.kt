@@ -121,26 +121,13 @@ fun ASCIIViewerScreen(
             progress = scanlineOffset.value,
         )
 
-        // ── 3. CRT vignette ───────────────────────────────────────────────────
-        Box(
-            Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.radialGradient(
-                        0.0f to Color.Transparent,
-                        0.75f to Color.Transparent,
-                        1.0f to Color(0xFF000000).copy(alpha = 0.7f),
-                    )
-                )
-        )
-
-        // ── 4. Top status bar ─────────────────────────────────────────────────
+        // ── 3. Top status bar ─────────────────────────────────────────────────
         TopStatusBar(
             modifier      = Modifier.align(Alignment.TopCenter),
             cursorVisible = cursorVisible,
         )
 
-        // ── 5. Bottom control bar ─────────────────────────────────────────────
+        // ── 4. Bottom control bar ─────────────────────────────────────────────
         BottomControlBar(
             modifier       = Modifier.align(Alignment.BottomCenter),
             lenses         = uiState.lenses,
@@ -168,20 +155,23 @@ private fun AsciiCanvas(
     modifier: Modifier,
     asciiFrame: String,
 ) {
-    // Render the ASCII string received from JNI as a monospace text block.
-    // This sits behind all overlays so the control bar floats above it.
-    Box(
+    // BoxWithConstraints lets us measure the physical screen size before drawing
+    BoxWithConstraints(
         modifier          = modifier.background(TermBg),
         contentAlignment  = Alignment.Center,
     ) {
+        // Compose Math: Forces the 64 C++ columns to perfectly fit the screen width!
+        val dynamicFontSize = (maxWidth.value / (64f * 0.55f)).sp
+
         Text(
             text       = asciiFrame,
-            fontSize   = 7.sp,        // Increased size
-            lineHeight = 7.sp,        // Squished vertically to make a solid grid
-            letterSpacing = 0.sp,     // Squished horizontally
+            fontFamily = FontFamily.Monospace,
+            fontSize   = dynamicFontSize,
+            lineHeight = dynamicFontSize * 0.85f, // Squish the height slightly so rows touch
             color      = TermGreen,
-            modifier   = Modifier.padding(4.dp),
             softWrap   = false,
+            textAlign  = androidx.compose.ui.text.style.TextAlign.Center,
+            modifier   = Modifier.fillMaxSize()
         )
     }
 }
