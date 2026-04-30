@@ -22,6 +22,7 @@ class MainActivity : ComponentActivity() {
 
     // ── JNI ───────────────────────────────────────────────────────────────────
     external fun getLatestAsciiFrame(): String
+    external fun feedFrame(yBytes: ByteArray, width: Int, height: Int)
 
     companion object {
         init { System.loadLibrary("palazikascii") }
