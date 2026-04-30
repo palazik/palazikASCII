@@ -32,5 +32,5 @@ The app relies on a carefully tuned pipeline to achieve real-time rendering:
 1. Clone the repository:
    ```bash
    git clone [https://github.com/palazik/palazikASCII.git](https://github.com/palazik/palazikASCII.git)
-2. Run GitHub Actions Workflow
-3. Download .zip from artifacts and install
+2. Run **GitHub Actions Workflow**
+3. **Download .zip** from **Artifacts** and install
