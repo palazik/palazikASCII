@@ -6,7 +6,7 @@ import androidx.camera.core.Preview
 import androidx.camera.core.resolutionselector.ResolutionSelector
 import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.lifecycle.ProcessCameraProvider
-import androidx.camera.camera2.interop.Camera2CameraSelector
+import androidx.camera.camera2.interop.Camera2CameraInfo
 import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
@@ -55,7 +55,11 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             val state = _uiState.value
             val lens = state.lenses.getOrNull(state.activeLensIndex)
                 ?: return CameraSelector.DEFAULT_BACK_CAMERA
-            return Camera2CameraSelector.fromCameraId(lens.cameraId)
+            return CameraSelector.Builder()
+                .addCameraFilter { cameras ->
+                    cameras.filter { Camera2CameraInfo.from(it).cameraId == lens.cameraId }
+                }
+                .build()
         }
 
     fun bindCamera(
