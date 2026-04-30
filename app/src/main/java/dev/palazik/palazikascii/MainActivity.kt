@@ -22,7 +22,7 @@ class MainActivity : ComponentActivity() {
 
     // ── JNI ───────────────────────────────────────────────────────────────────
     external fun getLatestAsciiFrame(): String
-    external fun feedFrame(yBytes: ByteArray, width: Int, height: Int)
+    external fun feedFrame(yBytes: ByteArray, width: Int, height: Int, rotation: Int)
 
     companion object {
         init { System.loadLibrary("palazikascii") }
@@ -67,9 +67,9 @@ class MainActivity : ComponentActivity() {
                     
                     // The UI Screen
                     ASCIIViewerScreen(
-                        asciiFrame = asciiFrame, // Uses the polled frame variable
-                        onFrame = { bytes, width, height -> 
-                            feedFrame(bytes, width, height) // Sends the camera frame to C++!
+                        asciiFrame = asciiFrame,
+                        onFrame = { bytes, width, height, rotation -> 
+                            feedFrame(bytes, width, height, rotation) // Passes rotation to C++
                         }
                     )
                 } else {
