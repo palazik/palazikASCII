@@ -13,10 +13,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
 import dev.palazik.palazikascii.ui.ASCIIViewerScreen
+import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
 
@@ -57,14 +57,21 @@ class MainActivity : ComponentActivity() {
                 val granted by permissionGranted
 
                 if (granted) {
-                    // Pull the latest ASCII frame on every recomposition tick.
-                    // In production you'd drive recomposition from a Flow/callback
-                    // that your JNI layer posts to at the camera frame rate.
+                    // Loop to pull the latest ASCII frame constantly (~30 FPS)
                     val asciiFrame by produceState(initialValue = "") {
-                        // Replace with your actual frame-driven flow here.
-                        value = getLatestAsciiFrame()
+                        while (true) {
+                            value = getLatestAsciiFrame()
+                            delay(33) // ~30 FPS
+                        }
                     }
-                    ASCIIViewerScreen(asciiFrame = asciiFrame)
+                    
+                    // The UI Screen
+                    ASCIIViewerScreen(
+                        asciiFrame = asciiFrame, // Uses the polled frame variable
+                        onFrame = { bytes, width, height -> 
+                            feedFrame(bytes, width, height) // Sends the camera frame to C++!
+                        }
+                    )
                 } else {
                     PermissionDeniedScreen()
                 }
