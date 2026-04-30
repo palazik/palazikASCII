@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import androidx.camera.core.ImageAnalysis
 
 data class CameraUiState(
     val lenses: List<DetectedLens> = emptyList(),
@@ -65,28 +66,48 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     fun bindCamera(
         lifecycleOwner: LifecycleOwner,
         preview: Preview,
+        onFrame: (ByteArray, Int, Int) -> Unit // 1. ADD IT HERE
     ) {
         val ctx = getApplication<Application>()
         val future = ProcessCameraProvider.getInstance(ctx)
         future.addListener({
             cameraProvider = future.get()
-            rebind(lifecycleOwner, preview)
+            rebind(lifecycleOwner, preview, onFrame) // 2. PASS IT HERE
         }, ContextCompat.getMainExecutor(ctx))
     }
 
-    fun rebind(lifecycleOwner: LifecycleOwner, preview: Preview) {
+    fun rebind(
+        lifecycleOwner: LifecycleOwner, 
+        preview: Preview,
+        onFrame: (ByteArray, Int, Int) -> Unit
+    ) {
         val provider = cameraProvider ?: return
         provider.unbindAll()
+    
+        val ctx = getApplication<Application>()
+        
+        // Build the frame analyzer
+        val analysis = ImageAnalysis.Builder()
+            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+            .build()
+            .also { ia ->
+                ia.setAnalyzer(ContextCompat.getMainExecutor(ctx)) { imageProxy ->
+                    val plane = imageProxy.planes[0]  // Grab Y plane
+                    val buf = plane.buffer
+                    val bytes = ByteArray(buf.remaining())
+                    buf.get(bytes)
+                    
+                    onFrame(bytes, imageProxy.width, imageProxy.height) // Send to C++
+                    imageProxy.close()
+                }
+            }
+    
         try {
-            provider.bindToLifecycle(lifecycleOwner, activeSelector, preview)
+            // Add 'analysis' to the bindToLifecycle call
+            provider.bindToLifecycle(lifecycleOwner, activeSelector, preview, analysis)
             _uiState.update { it.copy(isReady = true) }
         } catch (e: Exception) {
-            // Selector not available on this device; fall back to back camera
-            provider.bindToLifecycle(
-                lifecycleOwner,
-                CameraSelector.DEFAULT_BACK_CAMERA,
-                preview
-            )
+            provider.bindToLifecycle(lifecycleOwner, CameraSelector.DEFAULT_BACK_CAMERA, preview, analysis)
         }
     }
 }
