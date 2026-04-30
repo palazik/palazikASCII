@@ -57,7 +57,7 @@ private fun lensIcon(type: LensType) = when (type) {
 fun ASCIIViewerScreen(
     // Callback invoked each frame with the raw ASCII string from JNI
     asciiFrame: String,
-    onFrame: (ByteArray, Int, Int) -> Unit
+    onFrame: (ByteArray, Int, Int, Int) -> Unit
 ) {
     val viewModel: CameraViewModel = viewModel()
     val uiState by viewModel.uiState.collectAsState()
@@ -176,9 +176,9 @@ private fun AsciiCanvas(
     ) {
         Text(
             text       = asciiFrame,
-            fontFamily = FontFamily.Monospace,
-            fontSize   = 5.sp,        // tiny glyphs → dense grid
-            lineHeight = 6.sp,
+            fontSize   = 7.sp,        // Increased size
+            lineHeight = 7.sp,        // Squished vertically to make a solid grid
+            letterSpacing = 0.sp,     // Squished horizontally
             color      = TermGreen,
             modifier   = Modifier.padding(4.dp),
             softWrap   = false,
