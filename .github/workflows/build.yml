@@ -20,12 +20,9 @@ jobs:
           distribution: 'temurin'
           cache: gradle
 
-      # ── Gradle wrapper ──────────────────────────────────────────────────────
-      # Uses the setup-gradle action which handles wrapper download & caching
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.9'
+      # ── Gradle wrapper permissions ──────────────────────────────────────────
+      - name: Fix gradlew permissions
+        run: chmod +x gradlew
 
       # ── Android SDK + NDK ───────────────────────────────────────────────────
       - name: Set up Android SDK
@@ -55,9 +52,6 @@ jobs:
           echo "NDK_CCACHE=$(which ccache)"  >> $GITHUB_ENV
 
       # ── Build ───────────────────────────────────────────────────────────────
-      - name: Make gradlew executable
-        run: chmod +x gradlew
-
       - name: Build Debug APK
         run: ./gradlew assembleDebug --no-daemon --stacktrace
 
