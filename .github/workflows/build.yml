@@ -21,16 +21,16 @@ jobs:
           cache: gradle
 
       # ── Gradle ──────────────────────────────────────────────────────────────
-      # gradle-version here makes setup-gradle download and use Gradle 8.9 directly
-      # bypassing the committed wrapper jar entirely — no validation issues
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
 
-      # Make gradlew script executable (jar is bypassed, script still needed)
-      - name: Make gradlew executable
-        run: chmod +x gradlew
+      # Regenerate gradlew + wrapper jar using the just-installed Gradle 8.9
+      - name: Regenerate Gradle wrapper
+        run: |
+          gradle wrapper --gradle-version=8.9
+          chmod +x gradlew
 
       # ── Android SDK + NDK ───────────────────────────────────────────────────
       - name: Set up Android SDK
