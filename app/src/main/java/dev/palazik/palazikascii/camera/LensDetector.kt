@@ -42,9 +42,9 @@ object LensDetector {
      *
      * Categorisation heuristic (mirrors what OEM camera apps do internally):
      *  - Front-facing  → FRONT  (always)
-     *  - Focal length < 2.8 mm → ULTRAWIDE
-     *  - Focal length ≥ 2.8 mm && ≤ 5.5 mm → MAIN
-     *  - Focal length > 5.5 mm → TELEPHOTO
+     *  - Focal length < 2.0 mm → ULTRAWIDE
+     *  - Largest aperture (< 2.0f) or Focal length <= 7.0 mm → MAIN
+     *  - Focal length > 7.0 mm → TELEPHOTO
      *
      * Sorted order: ULTRAWIDE → MAIN → TELEPHOTO → FRONT
      */
@@ -59,22 +59,32 @@ object LensDetector {
 
                 // Skip external / non-optical sensors
                 val facing = chars.get(CameraCharacteristics.LENS_FACING) ?: continue
+                
+                // NEW: Skip fake "depth" or legacy auxiliary sensors
+                val hwLevel = chars.get(CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL)
+                if (hwLevel == CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL_LEGACY) continue
+
                 val focalLengths = chars.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)
                     ?.takeIf { it.isNotEmpty() } ?: continue
 
                 // Use the minimum reported focal length as the representative value
-                val minFocal = focalLengths.min()
+                val minFocal = focalLengths.minOrNull() ?: continue
 
                 // Deduplicate: some devices expose the same physical sensor under two IDs
                 if (!seenFocalLengths.add(minFocal)) continue
 
                 val isFront = facing == CameraCharacteristics.LENS_FACING_FRONT
 
+                // NEW: Use Aperture to reliably find the real Main sensor
+                val apertures = chars.get(CameraCharacteristics.LENS_INFO_AVAILABLE_APERTURES)
+                val minAperture = apertures?.minOrNull() ?: Float.MAX_VALUE
+
                 val lensType = when {
-                    isFront                 -> LensType.FRONT
-                    minFocal < 2.8f         -> LensType.ULTRAWIDE
-                    minFocal <= 5.5f        -> LensType.MAIN
-                    else                    -> LensType.TELEPHOTO
+                    isFront            -> LensType.FRONT
+                    minFocal < 2.0f    -> LensType.ULTRAWIDE
+                    minAperture < 2.0f -> LensType.MAIN      // widest aperture = main sensor
+                    minFocal <= 7.0f   -> LensType.MAIN
+                    else               -> LensType.TELEPHOTO
                 }
 
                 lenses.add(
