@@ -28,7 +28,7 @@ static constexpr int  kRampLen = sizeof(kRamp) - 1;
 static constexpr float kGlyphAspect = 0.55f;
 
 // Max columns — controls detail level. Rows are derived from screen AR + glyph AR.
-static constexpr int kMaxCols = 60;
+static constexpr int kMaxCols = 80;
 
 static inline uint8_t clamp_u8(int v) {
     return (uint8_t)(v < 0 ? 0 : v > 255 ? 255 : v);
