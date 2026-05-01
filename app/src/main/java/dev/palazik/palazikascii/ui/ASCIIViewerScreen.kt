@@ -167,7 +167,7 @@ private fun AsciiCanvas(
             fontFamily = FontFamily.Monospace,
             fontSize   = dynamicFontSize,
             lineHeight = dynamicFontSize * 0.85f, 
-            color      = TermGreen,
+            color      = Color.White,
             softWrap   = false,
             textAlign  = androidx.compose.ui.text.style.TextAlign.Center,
             modifier   = Modifier.fillMaxSize()
