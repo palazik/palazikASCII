@@ -124,36 +124,64 @@ private fun ColoredAsciiCanvas(
     cols: Int,
     rows: Int,
 ) {
-    val paint = remember {
-        Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            typeface  = Typeface.MONOSPACE
-            textAlign = Paint.Align.LEFT
-        }
-    }
-    val charBuf = remember { CharArray(1) }
+    // 1. Unpack the C++ array in memory instantly (No Canvas drawing yet)
+    val asciiData = remember(colorFrame) {
+        val total = cols * rows
+        if (total == 0 || colorFrame.size < total + 2) return@remember null
 
-    Canvas(modifier = modifier.background(TermBg)) {
-        val cellW = size.width  / cols
-        val cellH = size.height / rows
-        paint.textSize = cellH * 0.95f
+        val sb = java.lang.StringBuilder(total + rows)
+        val pixels = IntArray(total)
 
-        drawContext.canvas.nativeCanvas.apply {
-            // data starts at index 2
-            for (i in 0 until cols * rows) {
-                val packed  = colorFrame[i + 2]
+        var dataIdx = 2
+        for (r in 0 until rows) {
+            for (c in 0 until cols) {
+                val packed = colorFrame[dataIdx++]
                 val charIdx = (packed ushr 24) and 0xFF
-                val r       = (packed ushr 16) and 0xFF
-                val g       = (packed ushr  8) and 0xFF
-                val b       =  packed          and 0xFF
-
-                paint.color = android.graphics.Color.rgb(r, g, b)
-
-                val col = i % cols
-                val row = i / cols
-
-                charBuf[0] = kRamp[charIdx.coerceIn(0, kRamp.length - 1)]
-                drawText(charBuf, 0, 1, col * cellW, (row + 1) * cellH, paint)
+                
+                // Set Alpha to full (0xFF) and keep the RGB from C++
+                pixels[r * cols + c] = (0xFF shl 24) or (packed and 0x00FFFFFF)
+                sb.append(kRamp[charIdx.coerceIn(0, kRamp.length - 1)])
             }
+            sb.append('\n')
+        }
+
+        // Create a tiny Bitmap from the raw colors
+        val bmp = android.graphics.Bitmap.createBitmap(pixels, cols, rows, android.graphics.Bitmap.Config.ARGB_8888)
+        Pair(sb.toString(), bmp.asImageBitmap())
+    }
+
+    if (asciiData == null) return
+    val (textString, imageBitmap) = asciiData
+
+    BoxWithConstraints(
+        modifier = modifier
+            .background(TermBg)
+            // Force rendering to a GPU layer so we can use SrcIn blending
+            .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen },
+        contentAlignment = Alignment.Center
+    ) {
+        // Calculate font size perfectly based on screen width and the C++ column count
+        val dynamicFontSize = (maxWidth.value / (cols * 0.55f)).sp
+
+        // LAYER 1: Draw the pure white text ONCE (acts as the mask)
+        Text(
+            text = textString,
+            fontFamily = FontFamily.Monospace,
+            fontSize = dynamicFontSize,
+            lineHeight = dynamicFontSize * 1.0f,
+            color = Color.White,
+            softWrap = false,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            modifier = Modifier.fillMaxSize()
+        )
+
+        // LAYER 2: Stretch the color bitmap over the text
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            drawImage(
+                image = imageBitmap,
+                dstSize = androidx.compose.ui.unit.IntSize(size.width.toInt(), size.height.toInt()),
+                blendMode = BlendMode.SrcIn // Colors only stick to the white text
+            )
         }
     }
 }
