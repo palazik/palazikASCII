@@ -16,21 +16,28 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
 import dev.palazik.palazikascii.ui.ASCIIViewerScreen
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 
 class MainActivity : ComponentActivity() {
 
     // ── JNI ───────────────────────────────────────────────────────────────────
     external fun getLatestAsciiFrame(): String                          // legacy stub
     external fun getLatestColorFrame(): IntArray                        // new: packed int[]
+    
+    // FIX: Added 'isFront: Boolean' here so it matches C++ and the UI screen!
     external fun feedFrame(
-        yBytes: ByteArray, uvBytes: ByteArray,                          // added uvBytes
-        width: Int, height: Int, rotation: Int
+        yBytes: ByteArray, uvBytes: ByteArray,                          
+        width: Int, height: Int, rotation: Int, isFront: Boolean
     )
 
     companion object {
         init { System.loadLibrary("palazikascii") }
     }
+
+    // FIX: Analysis thread pushes frames here; Compose collects on main thread — no polling lag!
+    private val _frameFlow = MutableSharedFlow<IntArray>(extraBufferCapacity = 1)
+    private val frameFlow  = _frameFlow.asSharedFlow()
 
     // ── Permission launcher ───────────────────────────────────────────────────
     private val cameraPermissionResult =
@@ -59,18 +66,14 @@ class MainActivity : ComponentActivity() {
                 val granted by permissionGranted
 
                 if (granted) {
-                    // Pull latest color frame ~30 FPS on main thread (just an array copy)
-                    val colorFrame by produceState(initialValue = intArrayOf()) {
-                        while (true) {
-                            value = getLatestColorFrame()
-                            delay(33)
-                        }
-                    }
+                    // Uses the lag-free flow instead of the 33ms delay loop
+                    val colorFrame by frameFlow.collectAsState(initial = intArrayOf())
 
                     ASCIIViewerScreen(
                         colorFrame = colorFrame,
-                        onFrame = { yBytes, uvBytes, width, height, rotation ->
-                            feedFrame(yBytes, uvBytes, width, height, rotation)
+                        onFrame = { yBytes, uvBytes, width, height, rotation, front ->
+                            feedFrame(yBytes, uvBytes, width, height, rotation, front)
+                            _frameFlow.tryEmit(getLatestColorFrame())
                         }
                     )
                 } else {
