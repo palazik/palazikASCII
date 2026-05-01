@@ -2,6 +2,7 @@ package dev.palazik.palazikascii
 
 import android.Manifest
 import android.os.Bundle
+import android.util.DisplayMetrics
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -14,25 +15,23 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.sp
-import androidx.core.view.WindowCompat
 import dev.palazik.palazikascii.ui.ASCIIViewerScreen
 import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
 
-    // ── JNI ───────────────────────────────────────────────────────────────────
-    external fun getLatestAsciiFrame(): String                          // legacy stub
-    external fun getLatestColorFrame(): IntArray                        // new: packed int[]
+    external fun getLatestAsciiFrame(): String
+    external fun getLatestColorFrame(): IntArray
     external fun feedFrame(
-        yBytes: ByteArray, uvBytes: ByteArray,                          // added uvBytes
-        width: Int, height: Int, rotation: Int
+        yBytes: ByteArray, uvBytes: ByteArray,
+        width: Int, height: Int, rotation: Int, isFront: Boolean
     )
+    external fun setScreenSize(screenW: Int, screenH: Int)
 
     companion object {
         init { System.loadLibrary("palazikascii") }
     }
 
-    // ── Permission launcher ───────────────────────────────────────────────────
     private val cameraPermissionResult =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             permissionGranted.value = granted
@@ -43,9 +42,14 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        WindowCompat.setDecorFitsSystemWindows(window, false)
         window.statusBarColor     = android.graphics.Color.TRANSPARENT
         window.navigationBarColor = android.graphics.Color.TRANSPARENT
+
+        // Pass real screen size to C++ so grid aspect ratio is correct
+        val dm = DisplayMetrics()
+        @Suppress("DEPRECATION")
+        windowManager.defaultDisplay.getRealMetrics(dm)
+        setScreenSize(dm.widthPixels, dm.heightPixels)
 
         permissionGranted.value = checkSelfPermission(Manifest.permission.CAMERA) ==
                 android.content.pm.PackageManager.PERMISSION_GRANTED
@@ -59,7 +63,6 @@ class MainActivity : ComponentActivity() {
                 val granted by permissionGranted
 
                 if (granted) {
-                    // Pull latest color frame ~30 FPS on main thread (just an array copy)
                     val colorFrame by produceState(initialValue = intArrayOf()) {
                         while (true) {
                             value = getLatestColorFrame()
@@ -69,8 +72,8 @@ class MainActivity : ComponentActivity() {
 
                     ASCIIViewerScreen(
                         colorFrame = colorFrame,
-                        onFrame = { yBytes, uvBytes, width, height, rotation ->
-                            feedFrame(yBytes, uvBytes, width, height, rotation)
+                        onFrame = { yBytes, uvBytes, width, height, rotation, isFront ->
+                            feedFrame(yBytes, uvBytes, width, height, rotation, isFront)
                         }
                     )
                 } else {
@@ -84,9 +87,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun PermissionDeniedScreen() {
     Box(
-        modifier         = Modifier
-            .fillMaxSize()
-            .background(Color(0xFF050805)),
+        modifier         = Modifier.fillMaxSize().background(Color(0xFF050805)),
         contentAlignment = Alignment.Center,
     ) {
         Text(
