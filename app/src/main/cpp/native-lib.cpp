@@ -1,42 +1,73 @@
 #include <jni.h>
-#include <string>
 #include <vector>
 #include <mutex>
 #include <android/log.h>
-#include <cstring>
 
 #define LOG_TAG "palazikASCII"
 
 // ── Frame buffers ─────────────────────────────────────────────────────────────
 static std::vector<uint8_t> g_yPlane;
 static std::vector<uint8_t> g_uvPlane;
-static int g_width    = 0;
-static int g_height   = 0;
-static int g_rotation = 0;
+static int g_width      = 0;
+static int g_height     = 0;
+static int g_rotation   = 0;
+static bool g_isFront   = false;
+
+// Screen size — set from Kotlin so we can compute correct grid
+static int g_screenW    = 1080;
+static int g_screenH    = 2400;
+
 static std::mutex g_mutex;
 
 // ── ASCII ramp (dark → bright) ────────────────────────────────────────────────
-static constexpr char    kRamp[]   = " .:-=+*#%@";
-static constexpr int     kRampLen  = sizeof(kRamp) - 1;
+static constexpr char kRamp[]  = " .:-=+*#%@";
+static constexpr int  kRampLen = sizeof(kRamp) - 1;
 
-// ── Grid resolution ───────────────────────────────────────────────────────────
-// Portrait: 80×150 ≈ 12 000   Landscape: 150×80 ≈ 12 000
-static constexpr int kColsPortrait  = 80;
-static constexpr int kRowsPortrait  = 150;
-static constexpr int kColsLandscape = 150;
-static constexpr int kRowsLandscape = 80;
+// Monospace font glyph aspect ratio (width / height).
+// Typical monospace on Android ≈ 0.55–0.60. We use 0.55 as a safe default.
+static constexpr float kGlyphAspect = 0.55f;
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// Max columns — controls detail level. Rows are derived from screen AR + glyph AR.
+static constexpr int kMaxCols = 80;
+
 static inline uint8_t clamp_u8(int v) {
     return (uint8_t)(v < 0 ? 0 : v > 255 ? 255 : v);
 }
 
-// ── feedFrame: store Y + UV planes ───────────────────────────────────────────
+// ── Compute grid so glyphs appear square on screen ───────────────────────────
+// cellW_screen = screenW / cols
+// cellH_screen = screenH / rows
+// For square appearance: cellW_screen / cellH_screen == kGlyphAspect
+// → rows = cols * (screenH / screenW) / kGlyphAspect
+static void computeGrid(int& outCols, int& outRows) {
+    // Use actual screen orientation
+    int sw = g_screenW, sh = g_screenH;
+    if (sw > sh) { // landscape
+        sw = g_screenH; sh = g_screenW; // normalize to portrait math, swap after
+        outCols = kMaxCols;
+        outRows = (int)(outCols * ((float)sw / sh) / kGlyphAspect);
+    } else {
+        outCols = kMaxCols;
+        outRows = (int)(outCols * ((float)sh / sw) / kGlyphAspect);
+    }
+    if (outRows < 1) outRows = 1;
+}
+
+// ── setScreenSize: call once from Kotlin with actual display px ───────────────
+extern "C" JNIEXPORT void JNICALL
+Java_dev_palazik_palazikascii_MainActivity_setScreenSize(
+        JNIEnv*, jobject, jint screenW, jint screenH) {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    g_screenW = screenW;
+    g_screenH = screenH;
+}
+
+// ── feedFrame ─────────────────────────────────────────────────────────────────
 extern "C" JNIEXPORT void JNICALL
 Java_dev_palazik_palazikascii_MainActivity_feedFrame(
         JNIEnv* env, jobject,
         jbyteArray yBytes, jbyteArray uvBytes,
-        jint width, jint height, jint rotation) {
+        jint width, jint height, jint rotation, jboolean isFront) {
 
     jsize yLen  = env->GetArrayLength(yBytes);
     jsize uvLen = env->GetArrayLength(uvBytes);
@@ -49,51 +80,69 @@ Java_dev_palazik_palazikascii_MainActivity_feedFrame(
     g_width    = width;
     g_height   = height;
     g_rotation = rotation;
+    g_isFront  = (bool)isFront;
 }
 
-// ── getLatestColorFrame: returns int[] packed as 0xCCRRGGBB ──────────────────
-//   CC = ASCII ramp index (0-9), RR/GG/BB = colour
+// ── getGridSize: lets Kotlin know current cols/rows ───────────────────────────
+extern "C" JNIEXPORT jintArray JNICALL
+Java_dev_palazik_palazikascii_MainActivity_getGridSize(
+        JNIEnv* env, jobject) {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    int cols, rows;
+    computeGrid(cols, rows);
+    jintArray r = env->NewIntArray(2);
+    jint data[2] = { cols, rows };
+    env->SetIntArrayRegion(r, 0, 2, data);
+    return r;
+}
+
+// ── getLatestColorFrame ───────────────────────────────────────────────────────
+// Returns int[] packed as 0xCC_RR_GG_BB (CC = ramp index, RGB = colour).
+// First two ints are [cols, rows] as a header so Kotlin always knows the grid.
 extern "C" JNIEXPORT jintArray JNICALL
 Java_dev_palazik_palazikascii_MainActivity_getLatestColorFrame(
         JNIEnv* env, jobject) {
 
     std::lock_guard<std::mutex> lock(g_mutex);
 
-    if (g_yPlane.empty()) {
-        jintArray sentinel = env->NewIntArray(1);
-        return sentinel;
+    int cols, rows;
+    computeGrid(cols, rows);
+
+    if (g_yPlane.empty() || g_width == 0 || g_height == 0) {
+        // Return header-only sentinel
+        jintArray s = env->NewIntArray(2);
+        jint h[2] = { cols, rows };
+        env->SetIntArrayRegion(s, 0, 2, h);
+        return s;
     }
 
     bool isPortrait = (g_rotation == 90 || g_rotation == 270);
     int frameW = isPortrait ? g_height : g_width;
     int frameH = isPortrait ? g_width  : g_height;
 
-    int cols = isPortrait ? kColsPortrait  : kColsLandscape;
-    int rows = isPortrait ? kRowsPortrait  : kRowsLandscape;
-
     int cellW = frameW / cols;
     int cellH = frameH / rows;
-
-    if (cellW == 0 || cellH == 0) {
-        jintArray sentinel = env->NewIntArray(1);
-        return sentinel;
-    }
+    if (cellW < 1) cellW = 1;
+    if (cellH < 1) cellH = 1;
 
     int total = cols * rows;
-    jintArray result = env->NewIntArray(total);
-    if (!result) return nullptr;
-
-    std::vector<jint> buf(total);
+    // +2 for header
+    std::vector<jint> buf(total + 2);
+    buf[0] = cols;
+    buf[1] = rows;
 
     for (int r = 0; r < rows; r++) {
         for (int c = 0; c < cols; c++) {
+
+            // Mirror column for front camera
+            int drawCol = (g_isFront) ? (cols - 1 - c) : c;
 
             uint32_t sumY = 0, sumU = 0, sumV = 0;
             int count = 0;
 
             for (int dy = 0; dy < cellH; dy++) {
                 for (int dx = 0; dx < cellW; dx++) {
-                    int srcX = c * cellW + dx;
+                    int srcX = drawCol * cellW + dx;
                     int srcY = r * cellH + dy;
 
                     int rawX = srcX, rawY = srcY;
@@ -126,13 +175,12 @@ Java_dev_palazik_palazikascii_MainActivity_getLatestColorFrame(
                 }
             }
 
-            if (count == 0) { buf[r * cols + c] = 0; continue; }
+            if (count == 0) { buf[2 + r * cols + c] = 0; continue; }
 
             uint8_t Y = (uint8_t)(sumY / count);
             uint8_t U = (uint8_t)(sumU / count);
             uint8_t V = (uint8_t)(sumV / count);
 
-            // BT.601 YUV → RGB (integer math, no floats)
             int Yf = (int)Y - 16;
             int Uf = (int)U - 128;
             int Vf = (int)V - 128;
@@ -143,18 +191,20 @@ Java_dev_palazik_palazikascii_MainActivity_getLatestColorFrame(
 
             int charIdx = (Y * (kRampLen - 1)) / 255;
 
-            buf[r * cols + c] = (jint)(((uint32_t)charIdx << 24)
-                                      | ((uint32_t)R       << 16)
-                                      | ((uint32_t)G       <<  8)
-                                      |  (uint32_t)B);
+            buf[2 + r * cols + c] = (jint)(((uint32_t)charIdx << 24)
+                                          | ((uint32_t)R       << 16)
+                                          | ((uint32_t)G       <<  8)
+                                          |  (uint32_t)B);
         }
     }
 
-    env->SetIntArrayRegion(result, 0, total, buf.data());
+    jintArray result = env->NewIntArray((jsize)buf.size());
+    if (!result) return nullptr;
+    env->SetIntArrayRegion(result, 0, (jsize)buf.size(), buf.data());
     return result;
 }
 
-// ── Legacy stub (unused) ──────────────────────────────────────────────────────
+// ── Legacy stub ───────────────────────────────────────────────────────────────
 extern "C" JNIEXPORT jstring JNICALL
 Java_dev_palazik_palazikascii_MainActivity_getLatestAsciiFrame(
         JNIEnv* env, jobject) {
