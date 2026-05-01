@@ -1,0 +1,14 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="100"
+    android:viewportHeight="100">
+    <!-- Neon Green Camera Body -->
+    <path android:strokeColor="#00FF41" android:strokeWidth="5" android:strokeLineJoin="round" android:pathData="M 20 35 h 15 l 5 -10 h 20 l 5 10 h 15 a 5 5 0 0 1 5 5 v 40 a 5 5 0 0 1 -5 5 h -60 a 5 5 0 0 1 -5 -5 v -40 a 5 5 0 0 1 5 -5 Z"/>
+    <!-- The Lens -->
+    <path android:strokeColor="#00FF41" android:strokeWidth="5" android:pathData="M 50 45 a 12 12 0 1 0 0 24 a 12 12 0 1 0 0 -24 Z"/>
+    <!-- Terminal Prompt ">_" Inside the Lens -->
+    <path android:strokeColor="#00FF41" android:strokeWidth="3" android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M 45 52 l 4 4 l -4 4 M 53 60 h 6"/>
+    <!-- Flash / Sensor detail -->
+    <path android:fillColor="#00FF41" android:pathData="M 25 40 h 10 v 5 h -10 Z"/>
+</vector>
