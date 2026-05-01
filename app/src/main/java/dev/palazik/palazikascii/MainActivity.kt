@@ -21,8 +21,12 @@ import kotlinx.coroutines.delay
 class MainActivity : ComponentActivity() {
 
     // ── JNI ───────────────────────────────────────────────────────────────────
-    external fun getLatestAsciiFrame(): String
-    external fun feedFrame(yBytes: ByteArray, width: Int, height: Int, rotation: Int)
+    external fun getLatestAsciiFrame(): String                          // legacy stub
+    external fun getLatestColorFrame(): IntArray                        // new: packed int[]
+    external fun feedFrame(
+        yBytes: ByteArray, uvBytes: ByteArray,                          // added uvBytes
+        width: Int, height: Int, rotation: Int
+    )
 
     companion object {
         init { System.loadLibrary("palazikascii") }
@@ -39,12 +43,10 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Edge-to-edge, let Compose handle insets
         WindowCompat.setDecorFitsSystemWindows(window, false)
-        window.statusBarColor  = android.graphics.Color.TRANSPARENT
+        window.statusBarColor     = android.graphics.Color.TRANSPARENT
         window.navigationBarColor = android.graphics.Color.TRANSPARENT
 
-        // Check / request camera permission immediately
         permissionGranted.value = checkSelfPermission(Manifest.permission.CAMERA) ==
                 android.content.pm.PackageManager.PERMISSION_GRANTED
 
@@ -57,19 +59,18 @@ class MainActivity : ComponentActivity() {
                 val granted by permissionGranted
 
                 if (granted) {
-                    // Loop to pull the latest ASCII frame constantly (~30 FPS)
-                    val asciiFrame by produceState(initialValue = "") {
+                    // Pull latest color frame ~30 FPS on main thread (just an array copy)
+                    val colorFrame by produceState(initialValue = intArrayOf()) {
                         while (true) {
-                            value = getLatestAsciiFrame()
-                            delay(33) // ~30 FPS
+                            value = getLatestColorFrame()
+                            delay(33)
                         }
                     }
-                    
-                    // The UI Screen
+
                     ASCIIViewerScreen(
-                        asciiFrame = asciiFrame,
-                        onFrame = { bytes, width, height, rotation -> 
-                            feedFrame(bytes, width, height, rotation) // Passes rotation to C++
+                        colorFrame = colorFrame,
+                        onFrame = { yBytes, uvBytes, width, height, rotation ->
+                            feedFrame(yBytes, uvBytes, width, height, rotation)
                         }
                     )
                 } else {
@@ -83,10 +84,10 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun PermissionDeniedScreen() {
     Box(
-        modifier          = Modifier
+        modifier         = Modifier
             .fillMaxSize()
             .background(Color(0xFF050805)),
-        contentAlignment  = Alignment.Center,
+        contentAlignment = Alignment.Center,
     ) {
         Text(
             text       = "[ CAMERA PERMISSION REQUIRED ]",
