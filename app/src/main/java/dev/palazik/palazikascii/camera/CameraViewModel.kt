@@ -6,7 +6,6 @@ import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.Preview
 import androidx.camera.core.resolutionselector.ResolutionSelector
 import androidx.camera.core.resolutionselector.ResolutionStrategy
-import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.camera2.interop.Camera2CameraInfo
 import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.core.content.ContextCompat
@@ -32,16 +31,13 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     private val _uiState = MutableStateFlow(CameraUiState())
     val uiState: StateFlow<CameraUiState> = _uiState.asStateFlow()
 
-    private var cameraProvider: ProcessCameraProvider? = null
-
-    // Dedicated single thread for image analysis — keeps main thread free
+    private var cameraProvider: androidx.camera.lifecycle.ProcessCameraProvider? = null
     private val analysisExecutor = Executors.newSingleThreadExecutor()
 
     init {
         viewModelScope.launch {
             val lenses = LensDetector.detectLenses(application)
-            val defaultIndex = lenses.indexOfFirst { it.lensType == LensType.MAIN }
-                .coerceAtLeast(0)
+            val defaultIndex = lenses.indexOfFirst { it.lensType == LensType.MAIN }.coerceAtLeast(0)
             _uiState.update { it.copy(lenses = lenses, activeLensIndex = defaultIndex) }
         }
     }
@@ -49,8 +45,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     fun cycleToNextLens() {
         _uiState.update { state ->
             if (state.lenses.isEmpty()) return@update state
-            val next = (state.activeLensIndex + 1) % state.lenses.size
-            state.copy(activeLensIndex = next)
+            state.copy(activeLensIndex = (state.activeLensIndex + 1) % state.lenses.size)
         }
     }
 
@@ -66,13 +61,19 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 .build()
         }
 
+    val activeLensIsFront: Boolean
+        get() {
+            val state = _uiState.value
+            return state.lenses.getOrNull(state.activeLensIndex)?.isFront ?: false
+        }
+
     fun bindCamera(
         lifecycleOwner: LifecycleOwner,
         preview: Preview,
-        onFrame: (ByteArray, ByteArray, Int, Int, Int) -> Unit   // added uvBytes
+        onFrame: (ByteArray, ByteArray, Int, Int, Int, Boolean) -> Unit
     ) {
         val ctx = getApplication<Application>()
-        val future = ProcessCameraProvider.getInstance(ctx)
+        val future = androidx.camera.lifecycle.ProcessCameraProvider.getInstance(ctx)
         future.addListener({
             cameraProvider = future.get()
             rebind(lifecycleOwner, preview, onFrame)
@@ -82,10 +83,12 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     fun rebind(
         lifecycleOwner: LifecycleOwner,
         preview: Preview,
-        onFrame: (ByteArray, ByteArray, Int, Int, Int) -> Unit
+        onFrame: (ByteArray, ByteArray, Int, Int, Int, Boolean) -> Unit
     ) {
         val provider = cameraProvider ?: return
         provider.unbindAll()
+
+        val isFront = activeLensIsFront
 
         val analysis = ImageAnalysis.Builder()
             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
@@ -93,17 +96,12 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             .build()
             .also { ia ->
                 ia.setAnalyzer(analysisExecutor) { imageProxy ->
-                    // Y plane
-                    val yBuf = imageProxy.planes[0].buffer
-                    val yBytes = ByteArray(yBuf.remaining()).also { yBuf.get(it) }
-
-                    // UV plane (NV12 interleaved — plane index 1)
+                    val yBuf  = imageProxy.planes[0].buffer
                     val uvBuf = imageProxy.planes[1].buffer
+                    val yBytes  = ByteArray(yBuf.remaining()).also  { yBuf.get(it)  }
                     val uvBytes = ByteArray(uvBuf.remaining()).also { uvBuf.get(it) }
-
                     val rotation = imageProxy.imageInfo.rotationDegrees
-                    onFrame(yBytes, uvBytes, imageProxy.width, imageProxy.height, rotation)
-
+                    onFrame(yBytes, uvBytes, imageProxy.width, imageProxy.height, rotation, isFront)
                     imageProxy.close()
                 }
             }
