@@ -48,12 +48,6 @@ private val TermOverlay   = Color(0xCC080808)
 // ─── ASCII ramp (must match C++) ───────────────────────────────────────────────
 private const val kRamp = " .:-=+*#%@"
 
-// ─── Grid sizes (must match C++) ──────────────────────────────────────────────
-private const val kColsPortrait  = 80
-private const val kRowsPortrait  = 150
-private const val kColsLandscape = 150
-private const val kRowsLandscape = 80
-
 private fun lensIcon(type: LensType) = when (type) {
     LensType.ULTRAWIDE -> "0.6×"
     LensType.MAIN      -> "1×"
@@ -65,7 +59,8 @@ private fun lensIcon(type: LensType) = when (type) {
 @Composable
 fun ASCIIViewerScreen(
     colorFrame: IntArray,
-    onFrame: (ByteArray, ByteArray, Int, Int, Int) -> Unit   // y, uv, w, h, rot
+    // FIX 1: Added Boolean for isFront so it matches CameraViewModel
+    onFrame: (ByteArray, ByteArray, Int, Int, Int, Boolean) -> Unit 
 ) {
     val viewModel: CameraViewModel = viewModel()
     val uiState by viewModel.uiState.collectAsState()
@@ -163,22 +158,23 @@ private fun ColoredAsciiCanvas(
     val charBuf = remember { CharArray(1) }
 
     Canvas(modifier = modifier.background(TermBg)) {
-        if (colorFrame.size <= 1) return@Canvas
+        // FIX 2: Dynamic grid size reading from C++ header (index 0 and 1)
+        if (colorFrame.size < 2) return@Canvas
 
-        // Detect orientation from total cell count
-        val isPortrait  = colorFrame.size == kColsPortrait * kRowsPortrait
-        val cols        = if (isPortrait) kColsPortrait  else kColsLandscape
-        val rows        = if (isPortrait) kRowsPortrait  else kRowsLandscape
+        val cols = colorFrame[0]
+        val rows = colorFrame[1]
 
-        if (colorFrame.size != cols * rows) return@Canvas
+        if (cols <= 0 || rows <= 0 || colorFrame.size < (cols * rows) + 2) return@Canvas
 
         val cellW = size.width  / cols
         val cellH = size.height / rows
 
+        // Using your original font scaling
         paint.textSize = cellH * 0.95f
 
         drawContext.canvas.nativeCanvas.apply {
-            for (i in colorFrame.indices) {
+            // Loop starts at index 2 because 0 and 1 are cols/rows
+            for (i in 2 until colorFrame.size) {
                 val packed   = colorFrame[i]
                 val charIdx  = (packed ushr 24) and 0xFF
                 val r        = (packed ushr 16) and 0xFF
@@ -187,8 +183,9 @@ private fun ColoredAsciiCanvas(
 
                 paint.color = android.graphics.Color.rgb(r, g, b)
 
-                val col = i % cols
-                val row = i / cols
+                val dataIndex = i - 2
+                val col = dataIndex % cols
+                val row = dataIndex / cols
 
                 charBuf[0] = kRamp[charIdx.coerceIn(0, kRamp.length - 1)]
                 drawText(
