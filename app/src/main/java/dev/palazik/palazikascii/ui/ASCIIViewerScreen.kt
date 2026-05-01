@@ -1,5 +1,7 @@
 package dev.palazik.palazikascii.ui
 
+import android.graphics.Paint
+import android.graphics.Typeface
 import androidx.camera.core.Preview
 import androidx.camera.core.resolutionselector.ResolutionSelector
 import androidx.camera.core.resolutionselector.ResolutionStrategy
@@ -38,35 +40,39 @@ import kotlinx.coroutines.delay
 // ─── Colour tokens ─────────────────────────────────────────────────────────────
 private val TermGreen     = Color(0xFF00FF41)
 private val TermGreenDim  = Color(0xFF00CC33)
-private val TermGreenGlow = Color(0xFF00FF41).copy(alpha = 0.15f)
 private val TermBg        = Color(0xFF050805)
 private val TermSurface   = Color(0xFF0C110C)
 private val TermBorder    = Color(0xFF1A2E1A)
 private val TermOverlay   = Color(0xCC080808)
 
-// ─── Lens icon mapping ─────────────────────────────────────────────────────────
+// ─── ASCII ramp (must match C++) ───────────────────────────────────────────────
+private const val kRamp = " .:-=+*#%@"
+
+// ─── Grid sizes (must match C++) ──────────────────────────────────────────────
+private const val kColsPortrait  = 80
+private const val kRowsPortrait  = 150
+private const val kColsLandscape = 150
+private const val kRowsLandscape = 80
+
 private fun lensIcon(type: LensType) = when (type) {
-    LensType.ULTRAWIDE  -> "0.6×"
-    LensType.MAIN       -> "1×"
-    LensType.TELEPHOTO  -> "3×"
-    LensType.FRONT      -> "✦"
-    LensType.UNKNOWN    -> "?"
+    LensType.ULTRAWIDE -> "0.6×"
+    LensType.MAIN      -> "1×"
+    LensType.TELEPHOTO -> "3×"
+    LensType.FRONT     -> "✦"
+    LensType.UNKNOWN   -> "?"
 }
 
 @Composable
 fun ASCIIViewerScreen(
-    // Callback invoked each frame with the raw ASCII string from JNI
-    asciiFrame: String,
-    onFrame: (ByteArray, Int, Int, Int) -> Unit
+    colorFrame: IntArray,
+    onFrame: (ByteArray, ByteArray, Int, Int, Int) -> Unit   // y, uv, w, h, rot
 ) {
     val viewModel: CameraViewModel = viewModel()
     val uiState by viewModel.uiState.collectAsState()
-    val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
 
     var showAbout by remember { mutableStateOf(false) }
 
-    // Preview use-case kept stable across recompositions
     val preview = remember {
         Preview.Builder()
             .setResolutionSelector(
@@ -77,7 +83,6 @@ fun ASCIIViewerScreen(
             .build()
     }
 
-    // Bind camera once ViewModel is ready, rebind on lens switch
     LaunchedEffect(uiState.activeLensIndex, uiState.lenses) {
         if (uiState.lenses.isNotEmpty()) {
             viewModel.bindCamera(lifecycleOwner, preview, onFrame)
@@ -90,7 +95,7 @@ fun ASCIIViewerScreen(
         scanlineOffset.animateTo(
             targetValue   = 1f,
             animationSpec = infiniteRepeatable(
-                animation = tween(durationMillis = 4000, easing = LinearEasing),
+                animation  = tween(durationMillis = 4000, easing = LinearEasing),
                 repeatMode = RepeatMode.Restart,
             )
         )
@@ -108,75 +113,97 @@ fun ASCIIViewerScreen(
             .background(TermBg)
             .systemBarsPadding()
     ) {
-
-        // ── 1. ASCII Canvas (fills entire screen) ──────────────────────────────
-        AsciiCanvas(
+        ColoredAsciiCanvas(
             modifier   = Modifier.fillMaxSize(),
-            asciiFrame = asciiFrame,
+            colorFrame = colorFrame,
         )
 
-        // ── 2. Scanline overlay ────────────────────────────────────────────────
         ScanlineOverlay(
             modifier = Modifier.fillMaxSize(),
             progress = scanlineOffset.value,
         )
 
-        // ── 3. Top status bar ─────────────────────────────────────────────────
         TopStatusBar(
             modifier      = Modifier.align(Alignment.TopCenter),
             cursorVisible = cursorVisible,
         )
 
-        // ── 4. Bottom control bar ─────────────────────────────────────────────
         BottomControlBar(
-            modifier       = Modifier.align(Alignment.BottomCenter),
-            lenses         = uiState.lenses,
+            modifier        = Modifier.align(Alignment.BottomCenter),
+            lenses          = uiState.lenses,
             activeLensIndex = uiState.activeLensIndex,
-            onCycleCamera  = {
-                viewModel.cycleToNextLens()
-                // Rebind happens via LaunchedEffect above
-            },
-            onAboutClick   = { showAbout = true },
+            onCycleCamera   = { viewModel.cycleToNextLens() },
+            onAboutClick    = { showAbout = true },
         )
     }
 
-    // ── About sheet ────────────────────────────────────────────────────────────
     if (showAbout) {
         AboutBottomSheet(onDismiss = { showAbout = false })
     }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ASCII Canvas
+// Colored ASCII Canvas — native Canvas drawText per cell
 // ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
-private fun AsciiCanvas(
+private fun ColoredAsciiCanvas(
     modifier: Modifier,
-    asciiFrame: String,
+    colorFrame: IntArray,
 ) {
-    BoxWithConstraints(
-        modifier          = modifier.background(TermBg),
-        contentAlignment  = Alignment.Center,
-    ) {
-        // UPDATED MATH: Divide by 120f instead of 64f to match the new high-res C++ grid
-        val dynamicFontSize = (maxWidth.value / (120f * 0.55f)).sp
+    // Cached Paint — created once, never reallocated
+    val paint = remember {
+        Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            typeface  = Typeface.MONOSPACE
+            textAlign = Paint.Align.LEFT
+        }
+    }
 
-        Text(
-            text       = asciiFrame,
-            fontFamily = FontFamily.Monospace,
-            fontSize   = dynamicFontSize,
-            lineHeight = dynamicFontSize * 0.85f, 
-            color      = Color.White,
-            softWrap   = false,
-            textAlign  = androidx.compose.ui.text.style.TextAlign.Center,
-            modifier   = Modifier.fillMaxSize()
-        )
+    // Reusable 1-char buffer so we don't allocate a String per cell per frame
+    val charBuf = remember { CharArray(1) }
+
+    Canvas(modifier = modifier.background(TermBg)) {
+        if (colorFrame.size <= 1) return@Canvas
+
+        // Detect orientation from total cell count
+        val isPortrait  = colorFrame.size == kColsPortrait * kRowsPortrait
+        val cols        = if (isPortrait) kColsPortrait  else kColsLandscape
+        val rows        = if (isPortrait) kRowsPortrait  else kRowsLandscape
+
+        if (colorFrame.size != cols * rows) return@Canvas
+
+        val cellW = size.width  / cols
+        val cellH = size.height / rows
+
+        paint.textSize = cellH * 0.95f
+
+        drawContext.canvas.nativeCanvas.apply {
+            for (i in colorFrame.indices) {
+                val packed   = colorFrame[i]
+                val charIdx  = (packed ushr 24) and 0xFF
+                val r        = (packed ushr 16) and 0xFF
+                val g        = (packed ushr  8) and 0xFF
+                val b        =  packed          and 0xFF
+
+                paint.color = android.graphics.Color.rgb(r, g, b)
+
+                val col = i % cols
+                val row = i / cols
+
+                charBuf[0] = kRamp[charIdx.coerceIn(0, kRamp.length - 1)]
+                drawText(
+                    charBuf, 0, 1,
+                    col * cellW,
+                    (row + 1) * cellH,   // baseline
+                    paint
+                )
+            }
+        }
     }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Scanline overlay (pure Canvas draw — zero allocation per frame)
+// Scanline overlay
 // ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
@@ -193,7 +220,6 @@ private fun ScanlineOverlay(modifier: Modifier, progress: Float) {
             )
             y += lineSpacing
         }
-        // Moving bright scanline
         val scanY = progress * size.height
         drawLine(
             brush       = Brush.horizontalGradient(
@@ -219,31 +245,29 @@ private fun TopStatusBar(modifier: Modifier, cursorVisible: Boolean) {
         verticalAlignment     = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        // App name
         Text(
             text = buildString {
                 append("palazik")
                 append("ASCII")
                 if (cursorVisible) append("_") else append(" ")
             },
-            fontFamily  = FontFamily.Monospace,
-            fontWeight  = FontWeight.Bold,
-            fontSize    = 13.sp,
-            color       = TermGreen,
+            fontFamily    = FontFamily.Monospace,
+            fontWeight    = FontWeight.Bold,
+            fontSize      = 13.sp,
+            color         = TermGreen,
             letterSpacing = 1.sp,
         )
 
-        // Live indicator
         Row(
-            verticalAlignment = Alignment.CenterVertically,
+            verticalAlignment     = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(5.dp),
         ) {
             LiveDot()
             Text(
-                text       = "LIVE",
-                fontFamily = FontFamily.Monospace,
-                fontSize   = 10.sp,
-                color      = TermGreenDim,
+                text          = "LIVE",
+                fontFamily    = FontFamily.Monospace,
+                fontSize      = 10.sp,
+                color         = TermGreenDim,
                 letterSpacing = 2.sp,
             )
         }
@@ -253,9 +277,9 @@ private fun TopStatusBar(modifier: Modifier, cursorVisible: Boolean) {
 @Composable
 private fun LiveDot() {
     val scale by rememberInfiniteTransition(label = "dot").animateFloat(
-        initialValue   = 0.6f,
-        targetValue    = 1f,
-        animationSpec  = infiniteRepeatable(
+        initialValue  = 0.6f,
+        targetValue   = 1f,
+        animationSpec = infiniteRepeatable(
             animation  = tween(900, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse,
         ),
@@ -285,9 +309,7 @@ private fun BottomControlBar(
         modifier = modifier
             .fillMaxWidth()
             .background(
-                Brush.verticalGradient(
-                    listOf(Color.Transparent, TermOverlay)
-                )
+                Brush.verticalGradient(listOf(Color.Transparent, TermOverlay))
             )
             .padding(start = 20.dp, end = 20.dp, top = 32.dp, bottom = 20.dp),
     ) {
@@ -296,20 +318,8 @@ private fun BottomControlBar(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment     = Alignment.CenterVertically,
         ) {
-
-            // About button
-            TerminalIconButton(
-                onClick  = onAboutClick,
-                label    = "ABOUT",
-                icon     = Icons.Outlined.Info,
-            )
-
-            // Camera cycle button
-            LensCycleButton(
-                lenses          = lenses,
-                activeLensIndex = activeLensIndex,
-                onClick         = onCycleCamera,
-            )
+            TerminalIconButton(onClick = onAboutClick, label = "ABOUT", icon = Icons.Outlined.Info)
+            LensCycleButton(lenses = lenses, activeLensIndex = activeLensIndex, onClick = onCycleCamera)
         }
     }
 }
@@ -321,8 +331,7 @@ private fun LensCycleButton(
     onClick: () -> Unit,
 ) {
     val activeLens = lenses.getOrNull(activeLensIndex)
-    val label = activeLens?.let { "${lensIcon(it.lensType)}  ${it.label.uppercase()}" }
-        ?: "CAM"
+    val label = activeLens?.let { "${lensIcon(it.lensType)}  ${it.label.uppercase()}" } ?: "CAM"
 
     Box(
         modifier = Modifier
@@ -348,7 +357,7 @@ private fun LensCycleButton(
                 modifier           = Modifier.size(18.dp),
             )
             AnimatedContent(
-                targetState   = label,
+                targetState = label,
                 transitionSpec = {
                     fadeIn(tween(200)) + slideInVertically { it / 2 } togetherWith
                     fadeOut(tween(150)) + slideOutVertically { -it / 2 }
