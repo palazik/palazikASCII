@@ -2,6 +2,7 @@ package dev.palazik.palazikascii.camera
 
 import android.app.Application
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.Preview
 import androidx.camera.core.resolutionselector.ResolutionSelector
 import androidx.camera.core.resolutionselector.ResolutionStrategy
@@ -17,7 +18,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import androidx.camera.core.ImageAnalysis
+import java.util.concurrent.Executors
 
 data class CameraUiState(
     val lenses: List<DetectedLens> = emptyList(),
@@ -33,10 +34,12 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
 
     private var cameraProvider: ProcessCameraProvider? = null
 
+    // Dedicated single thread for image analysis — keeps main thread free
+    private val analysisExecutor = Executors.newSingleThreadExecutor()
+
     init {
         viewModelScope.launch {
             val lenses = LensDetector.detectLenses(application)
-            // Prefer MAIN as default; fall back to index 0
             val defaultIndex = lenses.indexOfFirst { it.lensType == LensType.MAIN }
                 .coerceAtLeast(0)
             _uiState.update { it.copy(lenses = lenses, activeLensIndex = defaultIndex) }
@@ -66,51 +69,55 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     fun bindCamera(
         lifecycleOwner: LifecycleOwner,
         preview: Preview,
-        onFrame: (ByteArray, Int, Int, Int) -> Unit
+        onFrame: (ByteArray, ByteArray, Int, Int, Int) -> Unit   // added uvBytes
     ) {
         val ctx = getApplication<Application>()
         val future = ProcessCameraProvider.getInstance(ctx)
         future.addListener({
             cameraProvider = future.get()
-            rebind(lifecycleOwner, preview, onFrame) // 2. PASS IT HERE
+            rebind(lifecycleOwner, preview, onFrame)
         }, ContextCompat.getMainExecutor(ctx))
     }
 
     fun rebind(
-        lifecycleOwner: LifecycleOwner, 
+        lifecycleOwner: LifecycleOwner,
         preview: Preview,
-        onFrame: (ByteArray, Int, Int, Int) -> Unit
+        onFrame: (ByteArray, ByteArray, Int, Int, Int) -> Unit
     ) {
         val provider = cameraProvider ?: return
         provider.unbindAll()
-    
-        val ctx = getApplication<Application>()
-        
-        // Build the frame analyzer
+
         val analysis = ImageAnalysis.Builder()
             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+            .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_YUV_420_888)
             .build()
             .also { ia ->
-                ia.setAnalyzer(ContextCompat.getMainExecutor(ctx)) { imageProxy ->
-                    val plane = imageProxy.planes[0]  
-                    val buf = plane.buffer
-                    val bytes = ByteArray(buf.remaining())
-                    buf.get(bytes)
-                    
-                    // GET THE ROTATION HERE AND SEND IT!
+                ia.setAnalyzer(analysisExecutor) { imageProxy ->
+                    // Y plane
+                    val yBuf = imageProxy.planes[0].buffer
+                    val yBytes = ByteArray(yBuf.remaining()).also { yBuf.get(it) }
+
+                    // UV plane (NV12 interleaved — plane index 1)
+                    val uvBuf = imageProxy.planes[1].buffer
+                    val uvBytes = ByteArray(uvBuf.remaining()).also { uvBuf.get(it) }
+
                     val rotation = imageProxy.imageInfo.rotationDegrees
-                    onFrame(bytes, imageProxy.width, imageProxy.height, rotation) 
-                    
+                    onFrame(yBytes, uvBytes, imageProxy.width, imageProxy.height, rotation)
+
                     imageProxy.close()
                 }
             }
-    
+
         try {
-            // Add 'analysis' to the bindToLifecycle call
             provider.bindToLifecycle(lifecycleOwner, activeSelector, preview, analysis)
             _uiState.update { it.copy(isReady = true) }
         } catch (e: Exception) {
             provider.bindToLifecycle(lifecycleOwner, CameraSelector.DEFAULT_BACK_CAMERA, preview, analysis)
         }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        analysisExecutor.shutdown()
     }
 }
