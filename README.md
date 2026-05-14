@@ -12,7 +12,7 @@ A high-performance Android camera app that converts live camera feeds into real-
 
 ## 🛠️ Tech Stack
 
-* **UI:** Jetpack Compose, Material Design 3
+* **UI:** Jetpack Compose
 * **Camera Pipeline:** CameraX (`camera-camera2`, `camera-lifecycle`, `camera-view`)
 * **Native Processing:** C++, JNI (Java Native Interface), CMake
 * **State Management:** Coroutines, `StateFlow`, `ViewModel`
